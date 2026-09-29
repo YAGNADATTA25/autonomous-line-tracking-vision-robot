@@ -1,0 +1,124 @@
+# TurtleBot3 Camera-Based Line Follower with Static Obstacle Avoidance
+
+This ROS 2 Humble workspace implements autonomous line following combined with a finite state machine (FSM) safety controller for static obstacle avoidance on a TurtleBot3 Waffle Pi. The system uses a visual PID loop for line tracking, Lidar scan sectors for obstacle detours, and a control multiplexer for seamless transitions.
+
+---
+
+## Demo Videos
+
+Below are screen recordings demonstrating the autonomous line follower and obstacle avoidance stack in action within the Gazebo simulation:
+
+### Demo 1: Full Course Autonomous Navigation & Obstacle Bypass
+[Download/Watch Video](media/demo_1.webm)
+
+<video src="media/demo_1.webm" width="100%" controls></video>
+
+### Demo 2: Autonomy Stack Performance
+[Download/Watch Video](media/demo_2.webm)
+
+<video src="media/demo_2.webm" width="100%" controls></video>
+
+---
+
+## System Topology & Data Flow
+
+```mermaid
+graph LR
+    Camera[/camera/image_raw/] --> Detector[line_detector]
+    Detector -->|line_error| Controller[line_controller]
+    Controller -->|cmd_vel_raw| Mux[cmd_vel_mux]
+    Lidar[/scan/] --> Safety[obstacle_avoid]
+    Safety -->|cmd_vel_obstacle| Mux
+    Safety -->|safety_state| Mux
+    Mux -->|cmd_vel| Robot((TurtleBot3))
+```
+
+1. **Line Detection**: The `line_detector` node processes `/camera/image_raw` using OpenCV (HSV thresholding, morphological filtering, and contour selection) to compute the centroid deviation from the center of the frame (`/line_error`).
+2. **Line Control**: The `line_controller` node uses a PID controller (proportional steering with velocity slowdown at sharp curves) to publish raw control inputs (`/cmd_vel_raw`).
+3. **Obstacle Avoidance**: The `obstacle_avoid` node processes `/scan` Lidar data. When an obstacle is detected in the front sector, it publishes to `/safety_state` and executes a multi-phase bypass trajectory (Turn Away, Shift Out, Drive Past, and Rejoin).
+4. **Command Mux**: The `cmd_vel_mux` node arbitrates control between `/cmd_vel_raw` and `/cmd_vel_obstacle` based on the active `/safety_state`, publishing the output to `/cmd_vel` with zero handover latency.
+
+---
+
+## Directory Structure
+
+```text
+ws/
+├── media/                         # Demo videos and recordings
+│   ├── demo_1.webm
+│   └── demo_2.webm
+├── .dev_archive/                  # Deprecated scripts, archives, and media files
+├── rviz/                          # RViz visualization configuration profiles
+│   └── yellow_line_demo.rviz
+├── worlds/                        # Gazebo simulation environments
+│   └── yellow_line_obstacle_demo.world
+├── run_final_demo.sh              # Production orchestrator (starts all nodes, simulator, and RViz)
+├── stop_final_demo.sh             # Graceful teardown of Gazebo and ROS 2 nodes
+├── collect_demo_debug.sh          # Diagnosis helper (saves report to /ws/logs/demo_debug_report.txt)
+├── start_yellow_line_world.sh     # Headless Gazebo & robot spawn script
+└── src/                           # ROS 2 source packages
+    ├── line_follower/             # Vision-based line tracking package
+    │   ├── launch/
+    │   │   └── line_follow.launch.py
+    │   └── line_follower/
+    │       ├── controller.py      # Line tracking velocity PID controller
+    │       └── line_detector.py   # OpenCV image processing node
+    └── tb3_safety/                # Safety monitoring and bypass maneuvers package
+        ├── launch/
+        │   └── obstacle_avoid.launch.py
+        └── tb3_safety/
+            ├── cmd_vel_mux.py     # Command velocity priority multiplexer
+            ├── obstacle_avoid.py  # FSM safety detour and bypass node
+            └── world_markers.py   # RViz visualization marker publisher
+```
+
+---
+
+## Installation & Build
+
+### Dependencies
+- ROS 2 Humble
+- Gazebo 11
+- OpenCV 4
+- `cv_bridge`
+- TurtleBot3 simulation packages (included in `src/`)
+
+### Compilation
+From the workspace root, compile the packages:
+```bash
+colcon build --symlink-install
+```
+Source the environment:
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+```
+
+---
+
+## Execution Guide
+
+### 1. Launch the Simulation and Autonomy Stack
+Execute the unified orchestration script. This starts the Gazebo environment, spawns the robot, launches the line follower and obstacle avoidance nodes, and opens RViz:
+```bash
+./run_final_demo.sh
+```
+
+### 2. Monitoring & Debugging
+Tail node logs in real time:
+```bash
+tail -f logs/autonomy_line.log
+tail -f logs/safety_obstacle.log
+tail -f logs/cmd_vel_mux.log
+```
+Check control messages:
+```bash
+ros2 topic echo /line_error
+ros2 topic echo /cmd_vel
+```
+
+### 3. Graceful Shutdown
+Shut down all processes, including simulator instances, RViz, and background nodes:
+```bash
+./stop_final_demo.sh
+```

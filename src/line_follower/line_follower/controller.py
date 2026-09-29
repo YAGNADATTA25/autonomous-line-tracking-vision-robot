@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+import math
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32, Int32
+from geometry_msgs.msg import Twist
+
+
+class LineController(Node):
+    def __init__(self):
+        super().__init__('line_controller')
+
+        params = {
+            'linear_x': 0.10,
+            'min_linear_x': 0.08,
+            'k_p': 0.0040,
+            'max_ang_z': 0.30,
+            'steer_sign': -1.0,
+            'lost_sentinel': -1000.0,
+            'search_w': 0.25,
+            'search_linear_x': 0.08,
+            'slowdown_error': 80.0,
+            'turn_in_place_error': 240.0,
+            'error_deadband': 10.0,
+            'angular_alpha': 0.35,
+            'lost_timeout_sec': 6.0,
+        }
+        for name, default in params.items():
+            self.declare_parameter(name, default)
+
+        self.linear_x = float(self.get_parameter('linear_x').value)
+        self.min_linear_x = float(self.get_parameter('min_linear_x').value)
+        self.k_p = float(self.get_parameter('k_p').value)
+        self.max_ang_z = float(self.get_parameter('max_ang_z').value)
+        self.steer_sign = float(self.get_parameter('steer_sign').value)
+        self.lost_sentinel = float(self.get_parameter('lost_sentinel').value)
+        self.search_w = float(self.get_parameter('search_w').value)
+        self.search_linear_x = float(self.get_parameter('search_linear_x').value)
+        self.slowdown_error = float(self.get_parameter('slowdown_error').value)
+        self.turn_in_place_error = float(self.get_parameter('turn_in_place_error').value)
+        self.error_deadband = max(0.0, float(self.get_parameter('error_deadband').value))
+        self.angular_alpha = self.clamp(float(self.get_parameter('angular_alpha').value), 0.0, 1.0)
+        self.lost_timeout_sec = max(0.0, float(self.get_parameter('lost_timeout_sec').value))
+
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_raw', 10)
+        self.err_sub = self.create_subscription(Float32, '/line_error', self.on_error, 10)
+        self.safety_sub = self.create_subscription(Int32, '/safety_state', self.on_safety_state, 10)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.on_cmd_vel, 10)
+        self.safety_state = 0
+        self.last_turn_sign = 1.0
+        self.last_angular_z = 0.0
+        self.lost_since = None
+        self.stopped_after_timeout = False
+
+        self.get_logger().info('Line controller initialized.')
+
+    @staticmethod
+    def clamp(value: float, low: float, high: float) -> float:
+        return max(low, min(high, value))
+
+    def on_safety_state(self, msg: Int32) -> None:
+        prev_state = self.safety_state
+        self.safety_state = msg.data
+        if self.safety_state != 0:
+            self.lost_since = None
+            self.stopped_after_timeout = False
+        elif prev_state != 0:
+            self.lost_since = None
+            self.stopped_after_timeout = False
+            self.last_angular_z = 0.0
+
+    def on_cmd_vel(self, msg: Twist) -> None:
+        if abs(msg.angular.z) > 0.01:
+            self.last_turn_sign = 1.0 if msg.angular.z > 0.0 else -1.0
+
+    def on_error(self, msg: Float32) -> None:
+        err = float(msg.data)
+        cmd = Twist()
+
+        if self.safety_state != 0:
+            self.lost_since = None
+            self.stopped_after_timeout = False
+
+        if not math.isfinite(err) or err == self.lost_sentinel or err == -1.0:
+            now = self.get_clock().now()
+            if self.lost_since is None:
+                self.lost_since = now
+            lost_elapsed = (now - self.lost_since).nanoseconds / 1e9
+
+            # Halt if search window has expired to prevent run-away
+            if lost_elapsed >= self.lost_timeout_sec:
+                cmd.linear.x = 0.0
+                cmd.angular.z = 0.0
+                if not self.stopped_after_timeout:
+                    self.stopped_after_timeout = True
+                    self.get_logger().warn(f'Line lost {lost_elapsed:.1f}s (>= {self.lost_timeout_sec}s) -- stopping')
+            else:
+                cmd.linear.x = self.search_linear_x
+                cmd.angular.z = self.last_turn_sign * self.search_w
+            self.last_angular_z = cmd.angular.z
+            self.cmd_pub.publish(cmd)
+            return
+
+        self.lost_since = None
+        self.stopped_after_timeout = False
+
+        # Deadband check to prevent oscillation around path center
+        if abs(err) <= self.error_deadband:
+            target_angular_z = 0.0
+        else:
+            target_angular_z = self.clamp(self.steer_sign * self.k_p * err, -self.max_ang_z, self.max_ang_z)
+
+        # Low-pass filter to dampen steering command changes
+        angular_z = self.last_angular_z + self.angular_alpha * (target_angular_z - self.last_angular_z)
+        angular_z = self.clamp(angular_z, -self.max_ang_z, self.max_ang_z)
+        self.last_angular_z = angular_z
+        if abs(angular_z) > 1e-4:
+            self.last_turn_sign = 1.0 if angular_z > 0.0 else -1.0
+
+        # Reduce forward speed proportionally at high error yaw rates
+        abs_error = abs(err)
+        if abs_error >= self.turn_in_place_error:
+            linear_x = 0.0
+        elif abs_error <= self.slowdown_error:
+            linear_x = self.linear_x
+        else:
+            span = max(1.0, self.turn_in_place_error - self.slowdown_error)
+            ratio = (abs_error - self.slowdown_error) / span
+            linear_x = self.linear_x - ratio * (self.linear_x - self.min_linear_x)
+
+        cmd.linear.x = max(0.0, linear_x)
+        cmd.angular.z = angular_z
+        self.cmd_pub.publish(cmd)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = LineController()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
