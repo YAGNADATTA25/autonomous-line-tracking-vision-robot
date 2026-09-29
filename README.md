@@ -1,124 +1,86 @@
-# TurtleBot3 Camera-Based Line Follower with Static Obstacle Avoidance
+### Autonomous Vision-Guided Line Tracking & Reactive Obstacle Avoidance
 
-This ROS 2 Humble workspace implements autonomous line following combined with a finite state machine (FSM) safety controller for static obstacle avoidance on a TurtleBot3 Waffle Pi. The system uses a visual PID loop for line tracking, Lidar scan sectors for obstacle detours, and a control multiplexer for seamless transitions.
+![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-blue.svg)
+![Python 3.10](https://img.shields.io/badge/Language-Python_3.10-yellow.svg)
+![OpenCV 4.x](https://img.shields.io/badge/Vision-OpenCV_4.x-red.svg)
+![Gazebo Simulator](https://img.shields.io/badge/Simulator-Gazebo_Classic-orange.svg)
+![License](https://img.shields.io/badge/License-Apache_2.0-red.svg)
 
----
+An industrial ROS 2 vision navigation package combining real-time monocular camera image processing with closed-loop angular tracking and reactive LiDAR distance obstacle clearance for differential-drive mobile platforms.
 
-## Demo Videos
-
-Below are screen recordings demonstrating the autonomous line follower and obstacle avoidance stack in action within the Gazebo simulation:
-
-### Demo 1: Full Course Autonomous Navigation & Obstacle Bypass
-[Download/Watch Video](media/demo_1.webm)
-
-<video src="media/demo_1.webm" width="100%" controls></video>
-
-### Demo 2: Autonomy Stack Performance
-[Download/Watch Video](media/demo_2.webm)
-
-<video src="media/demo_2.webm" width="100%" controls></video>
-
----
-
-## System Topology & Data Flow
-
-```mermaid
-graph LR
-    Camera[/camera/image_raw/] --> Detector[line_detector]
-    Detector -->|line_error| Controller[line_controller]
-    Controller -->|cmd_vel_raw| Mux[cmd_vel_mux]
-    Lidar[/scan/] --> Safety[obstacle_avoid]
-    Safety -->|cmd_vel_obstacle| Mux
-    Safety -->|safety_state| Mux
-    Mux -->|cmd_vel| Robot((TurtleBot3))
-```
-
-1. **Line Detection**: The `line_detector` node processes `/camera/image_raw` using OpenCV (HSV thresholding, morphological filtering, and contour selection) to compute the centroid deviation from the center of the frame (`/line_error`).
-2. **Line Control**: The `line_controller` node uses a PID controller (proportional steering with velocity slowdown at sharp curves) to publish raw control inputs (`/cmd_vel_raw`).
-3. **Obstacle Avoidance**: The `obstacle_avoid` node processes `/scan` Lidar data. When an obstacle is detected in the front sector, it publishes to `/safety_state` and executes a multi-phase bypass trajectory (Turn Away, Shift Out, Drive Past, and Rejoin).
-4. **Command Mux**: The `cmd_vel_mux` node arbitrates control between `/cmd_vel_raw` and `/cmd_vel_obstacle` based on the active `/safety_state`, publishing the output to `/cmd_vel` with zero handover latency.
-
----
-
-## Directory Structure
-
-```text
-ws/
-├── media/                         # Demo videos and recordings
-│   ├── demo_1.webm
-│   └── demo_2.webm
-├── .dev_archive/                  # Deprecated scripts, archives, and media files
-├── rviz/                          # RViz visualization configuration profiles
-│   └── yellow_line_demo.rviz
-├── worlds/                        # Gazebo simulation environments
-│   └── yellow_line_obstacle_demo.world
-├── run_final_demo.sh              # Production orchestrator (starts all nodes, simulator, and RViz)
-├── stop_final_demo.sh             # Graceful teardown of Gazebo and ROS 2 nodes
-├── collect_demo_debug.sh          # Diagnosis helper (saves report to /ws/logs/demo_debug_report.txt)
-├── start_yellow_line_world.sh     # Headless Gazebo & robot spawn script
-└── src/                           # ROS 2 source packages
-    ├── line_follower/             # Vision-based line tracking package
-    │   ├── launch/
-    │   │   └── line_follow.launch.py
-    │   └── line_follower/
-    │       ├── controller.py      # Line tracking velocity PID controller
-    │       └── line_detector.py   # OpenCV image processing node
-    └── tb3_safety/                # Safety monitoring and bypass maneuvers package
-        ├── launch/
-        │   └── obstacle_avoid.launch.py
-        └── tb3_safety/
-            ├── cmd_vel_mux.py     # Command velocity priority multiplexer
-            ├── obstacle_avoid.py  # FSM safety detour and bypass node
-            └── world_markers.py   # RViz visualization marker publisher
 ```
 
 ---
 
-## Installation & Build
+## 🏗 System Architecture & Closed-Loop Control Pipeline
 
-### Dependencies
-- ROS 2 Humble
-- Gazebo 11
-- OpenCV 4
-- `cv_bridge`
-- TurtleBot3 simulation packages (included in `src/`)
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Target Platform / Gazebo Sim                        │
+│               (Monocular RGB Camera + LiDAR Range Array)                │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │ Topic: /camera/image_raw (sensor_msgs/Image)
+                                     │ Topic: /scan (sensor_msgs/msg/LaserScan)
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                    OpenCV Image Processing Node                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ HSV Color Space Thresholding & Morphological Filtering            │  │
+│  │ Region of Interest (ROI) Masking & Centroid Extraction            │  │
+│  │ Track Error Calculation: \(e_{\text{track}} = cx_{\text{target}} - cx_{\text{frame}}\) │  │
+│  └─────────────────────────────────┬─────────────────────────────────┘  │
+└────────────────────────────────────┼────────────────────────────────────┘
+                                     │ Pixel Error Vector & Laser Distances
+┌────────────────────────────────────▼────────────────────────────────────┐
+│              Vision Line-Tracking & Reactive Safety Node                │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Closed-Loop Proportional Angular Steering Controller              │  │
+│  │ LiDAR Proximity Safety Intercept: Emergency Braking & Pivot       │  │
+│  └─────────────────────────────────┬─────────────────────────────────┘  │
+└────────────────────────────────────┼────────────────────────────────────┘
+                                     │ Topic: /cmd_vel (geometry_msgs/msg/Twist)
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                       Robot Motor Controllers                           │
+└─────────────────────────────────────────────────────────────────────────┘
 
-### Compilation
-From the workspace root, compile the packages:
+```
+
+---
+
+## 🔑 Key Technical Features
+
+* **Real-Time Computer Vision Pipeline:** Processes raw camera streams (`sensor_msgs/msg/Image`) via `cv_bridge` and OpenCV, applying HSV color space segmentation, Gaussian blur noise reduction, and moment centroid extraction to track floor trajectory lines.
+* **Closed-Loop Steering Control:** Computes lateral pixel displacement between image center and path centroid to generate continuous proportional angular velocity ($\omega_z$) commands.
+* **Multi-Modal Reactive Safety Override:** Intercepts vision tracking commands using raw 2D LiDAR range inputs to execute emergency stops or pivot maneuvers when dynamic obstacles cross the path.
+* **Dynamic Speed Saturation:** Automatically scales down linear velocity $v_x$ during high-angular-turn corrections to mitigate path hunting and overshooting at sharp track curves.
+
+---
+
+## 💻 Tech Stack & Interfaces
+
+* **ROS 2 Middleware:** Humble Hawksbill
+* **Programming Languages:** Python 3.10 (`rclpy`), OpenCV 4.x
+* **Core ROS 2 Interfaces:** `cv_bridge`, `sensor_msgs/msg/Image`, `sensor_msgs/msg/LaserScan`, `geometry_msgs/msg/Twist`
+* **Simulation Target:** Gazebo Classic 11 / Differential Drive Robot
+
+---
+
+## 🚀 Quick Start Guide
+
+### Prerequisites
+
+Ensure ROS 2 Humble and Gazebo Classic are installed on Ubuntu 22.04 LTS.
+
 ```bash
-colcon build --symlink-install
-```
-Source the environment:
-```bash
-source /opt/ros/humble/setup.bash
+# 1. Clone repository into workspace
+cd ~/ros2_ws/src
+git clone [https://github.com/YAGNADATTA25/autonomous-line-tracking-vision-robot.git](https://github.com/YAGNADATTA25/autonomous-line-tracking-vision-robot.git)
+
+# 2. Build workspace
+cd ~/ros2_ws
+colcon build --symlink-install --packages-select line_tracking
 source install/setup.bash
-```
 
----
+# 3. Launch Simulation & Vision Controller
+ros2 launch line_tracking line_tracking.launch.py
 
-## Execution Guide
-
-### 1. Launch the Simulation and Autonomy Stack
-Execute the unified orchestration script. This starts the Gazebo environment, spawns the robot, launches the line follower and obstacle avoidance nodes, and opens RViz:
-```bash
-./run_final_demo.sh
-```
-
-### 2. Monitoring & Debugging
-Tail node logs in real time:
-```bash
-tail -f logs/autonomy_line.log
-tail -f logs/safety_obstacle.log
-tail -f logs/cmd_vel_mux.log
-```
-Check control messages:
-```bash
-ros2 topic echo /line_error
-ros2 topic echo /cmd_vel
-```
-
-### 3. Graceful Shutdown
-Shut down all processes, including simulator instances, RViz, and background nodes:
-```bash
-./stop_final_demo.sh
 ```
