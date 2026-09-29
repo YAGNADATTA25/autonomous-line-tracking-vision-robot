@@ -1,6 +1,7 @@
-```markdown
-# Autonomous Vision-Guided Line Tracking & Reactive Obstacle Avoidance
 
+### Autonomous Vision-Guided Line Tracking & Reactive Obstacle Avoidance
+
+```markdown
 ![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-blue.svg)
 ![Python 3.10](https://img.shields.io/badge/Language-Python_3.10-yellow.svg)
 ![OpenCV 4.x](https://img.shields.io/badge/Vision-OpenCV_4.x-red.svg)
