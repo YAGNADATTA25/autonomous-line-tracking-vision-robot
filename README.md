@@ -1,4 +1,5 @@
-### Autonomous Vision-Guided Line Tracking & Reactive Obstacle Avoidance
+```markdown
+# Autonomous Vision-Guided Line Tracking & Reactive Obstacle Avoidance
 
 ![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-blue.svg)
 ![Python 3.10](https://img.shields.io/badge/Language-Python_3.10-yellow.svg)
@@ -26,7 +27,7 @@ An industrial ROS 2 vision navigation package combining real-time monocular came
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │ HSV Color Space Thresholding & Morphological Filtering            │  │
 │  │ Region of Interest (ROI) Masking & Centroid Extraction            │  │
-│  │ Track Error Calculation: \(e_{\text{track}} = cx_{\text{target}} - cx_{\text{frame}}\) │  │
+│  │ Track Error Calculation: e_track = cx_target - cx_frame           │  │
 │  └─────────────────────────────────┬─────────────────────────────────┘  │
 └────────────────────────────────────┼────────────────────────────────────┘
                                      │ Pixel Error Vector & Laser Distances
@@ -84,3 +85,5 @@ source install/setup.bash
 ros2 launch line_tracking line_tracking.launch.py
 
 ```
+
+---
